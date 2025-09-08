@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id    Int     @id @default(autoincrement())
+  email String  @unique
+  name  String?
+
+  maps Map[]
+}
+
+model Map {
+  id        String     @id @default(cuid())
+  user_id  Int
+  user    User    @relation(fields: [user_id], references: [id])
+
+  tiles Tile[]
+}
+
+model Tile {
+  id Int @id @default(autoincrement())
+  z Int
+  x Int
+  y Int
+  urls String[] @default([])
+
+  map_id String
+  map   Map    @relation(fields: [map_id], references: [id])
+}
