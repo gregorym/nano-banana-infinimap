@@ -1,4 +1,6 @@
 "use client";
+
+import { api } from "@/trpc/react";
 import "leaflet/dist/leaflet.css";
 import dynamic from "next/dynamic";
 import {
@@ -9,9 +11,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const TileControls = dynamic(() => import("./TileControls"), { ssr: false });
 
-const MAX_Z = Number(process.env.NEXT_PUBLIC_ZMAX ?? 8);
+type MapClientProps = {
+  mapId: string;
+};
 
-export default function MapClient() {
+export default function MapClient({ mapId }: MapClientProps) {
+  const { data: mapConfig } = api.maps.get.useQuery({ id: mapId });
+
   const ref = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<any>(null);
   const [hoveredTile, setHoveredTile] = useState<{
@@ -94,7 +100,9 @@ export default function MapClient() {
         // Create new request
         const promise = (async () => {
           try {
-            const response = await fetch(`/api/meta/${MAX_Z}/${x}/${y}`);
+            const response = await fetch(
+              `/api/meta/${mapConfig?.depth}/${x}/${y}`
+            );
             const data = await response.json();
             const exists = data.status === "READY";
             console.log({ x, y, exists });
@@ -120,11 +128,14 @@ export default function MapClient() {
   const handleGenerate = useCallback(
     async (x: number, y: number, prompt: string) => {
       try {
-        const response = await fetch(`/api/claim/${MAX_Z}/${x}/${y}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        });
+        const response = await fetch(
+          `/api/claim/${mapConfig?.depth}/${x}/${y}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+          }
+        );
 
         if (response.ok) {
           // Start polling for completion
@@ -147,11 +158,14 @@ export default function MapClient() {
   const handleRegenerate = useCallback(
     async (x: number, y: number, prompt: string) => {
       try {
-        const response = await fetch(`/api/invalidate/${MAX_Z}/${x}/${y}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        });
+        const response = await fetch(
+          `/api/invalidate/${mapConfig?.depth}/${x}/${y}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+          }
+        );
 
         if (response.ok) {
           // Start polling for completion
@@ -173,9 +187,12 @@ export default function MapClient() {
   const handleDelete = useCallback(
     async (x: number, y: number) => {
       try {
-        const response = await fetch(`/api/delete/${MAX_Z}/${x}/${y}`, {
-          method: "DELETE",
-        });
+        const response = await fetch(
+          `/api/delete/${mapConfig?.depth}/${x}/${y}`,
+          {
+            method: "DELETE",
+          }
+        );
 
         if (response.ok) {
           // Force refresh tiles with a cache-busting URL so the deleted
@@ -192,7 +209,7 @@ export default function MapClient() {
               {
                 tileSize: 256,
                 minZoom: 0,
-                maxZoom: MAX_Z,
+                maxZoom: mapConfig?.depth,
                 noWrap: true,
                 updateWhenIdle: false,
                 updateWhenZooming: false,
@@ -213,10 +230,15 @@ export default function MapClient() {
   );
 
   useEffect(() => {
-    if (!ref.current || map) return;
+    if (!ref.current || map || !mapConfig) return;
 
     // Dynamic import for Leaflet to avoid SSR issues
     import("leaflet").then((L) => {
+      // Double-check that the container hasn't been initialized
+      if (ref.current && ref.current._leaflet_id) {
+        console.warn("Map container already initialized, skipping");
+        return;
+      }
       // Parse initial position from URL
       const initialZoom = searchParams?.get("z")
         ? parseInt(searchParams.get("z")!)
@@ -231,13 +253,13 @@ export default function MapClient() {
       const m = L.map(ref.current!, {
         crs: L.CRS.Simple,
         minZoom: 0,
-        maxZoom: MAX_Z,
+        maxZoom: mapConfig?.depth,
         zoom: initialZoom,
       });
 
-      const world = (1 << MAX_Z) * 256;
-      const sw = m.unproject([0, world] as any, MAX_Z);
-      const ne = m.unproject([world, 0] as any, MAX_Z);
+      const world = (1 << mapConfig?.depth!) * 256;
+      const sw = m.unproject([0, world] as any, mapConfig?.depth);
+      const ne = m.unproject([world, 0] as any, mapConfig?.depth);
       const bounds = new L.LatLngBounds(sw, ne);
       m.setMaxBounds(bounds);
 
@@ -252,7 +274,7 @@ export default function MapClient() {
       const tileLayer = L.tileLayer(`/api/tiles/{z}/{x}/{y}?v=${Date.now()}`, {
         tileSize: 256,
         minZoom: 0,
-        maxZoom: MAX_Z,
+        maxZoom: mapConfig?.depth,
         noWrap: true,
         updateWhenIdle: false,
         updateWhenZooming: false,
@@ -399,7 +421,14 @@ export default function MapClient() {
         updateURL(m);
       }
     });
-  }, [map, searchParams, updateURL, hoveredTile, tileExists, checkTileExists]);
+
+    // Cleanup function
+    return () => {
+      if (map && map.remove) {
+        map.remove();
+      }
+    };
+  }, [mapConfig, searchParams, updateURL, checkTileExists]);
 
   // Poll for tile generation completion
   const pollTileStatus = async (x: number, y: number, m: any, L: any) => {
@@ -408,11 +437,13 @@ export default function MapClient() {
 
     const checkStatus = async () => {
       try {
-        const response = await fetch(`/api/meta/${MAX_Z}/${x}/${y}`);
+        const response = await fetch(`/api/meta/${mapConfig?.depth}/${x}/${y}`);
         const data = await response.json();
 
         if (data.status === "READY") {
-          console.log(`Tile ready at ${MAX_Z}/${x}/${y}, refreshing...`);
+          console.log(
+            `Tile ready at ${mapConfig?.depth}/${x}/${y}, refreshing...`
+          );
 
           // Get the tile layer
           const tileLayer = (m as any)._tileLayer;
@@ -424,10 +455,10 @@ export default function MapClient() {
 
             // Try different key formats
             const keys = [
-              `${x}:${y}:${MAX_Z}`,
-              `${MAX_Z}:${x}:${y}`,
-              `${x}_${y}_${MAX_Z}`,
-              `${MAX_Z}_${x}_${y}`,
+              `${x}:${y}:${mapConfig?.depth}`,
+              `${mapConfig?.depth}:${x}:${y}`,
+              `${x}_${y}_${mapConfig?.depth}`,
+              `${mapConfig?.depth}_${x}_${y}`,
             ];
 
             let tileFound = false;
@@ -436,7 +467,9 @@ export default function MapClient() {
                 const tileEl = tileLayer._tiles[key].el;
                 if (tileEl && tileEl.src) {
                   // Force reload with cache buster
-                  tileEl.src = `/api/tiles/${MAX_Z}/${x}/${y}?t=${Date.now()}`;
+                  tileEl.src = `/api/tiles/${
+                    mapConfig?.depth
+                  }/${x}/${y}?t=${Date.now()}`;
                   console.log(
                     `Updated tile src with key ${key}: ${tileEl.src}`
                   );
@@ -455,7 +488,7 @@ export default function MapClient() {
                 {
                   tileSize: 256,
                   minZoom: 0,
-                  maxZoom: MAX_Z,
+                  maxZoom: mapConfig?.depth,
                   noWrap: true,
                   updateWhenIdle: false,
                   updateWhenZooming: false,
@@ -482,7 +515,7 @@ export default function MapClient() {
     <div className="w-full h-full relative">
       <div className="p-3 z-10 absolute top-2 left-2 bg-white/90 rounded-xl shadow-lg flex flex-col gap-2">
         <div className="text-sm text-gray-600">
-          {map && map.getZoom() === MAX_Z
+          {map && map.getZoom() === mapConfig?.depth
             ? "Hover to highlight, click to open menu"
             : "Zoom to max level to interact with tiles"}
         </div>
@@ -495,23 +528,26 @@ export default function MapClient() {
       </div>
 
       {/* Hover highlight at max zoom (visual only, non-interactive) */}
-      {hoveredTile && !selectedTile && map && map.getZoom() === MAX_Z && (
-        <div
-          className="absolute"
-          style={{
-            left: hoveredTile.screenX - 128,
-            top: hoveredTile.screenY - 128,
-            width: 256,
-            height: 256,
-            background: "rgba(255,255,255,0.1)",
-            pointerEvents: "none",
-            zIndex: 1000,
-          }}
-        />
-      )}
+      {hoveredTile &&
+        !selectedTile &&
+        map &&
+        map.getZoom() === mapConfig?.depth && (
+          <div
+            className="absolute"
+            style={{
+              left: hoveredTile.screenX - 128,
+              top: hoveredTile.screenY - 128,
+              width: 256,
+              height: 256,
+              background: "rgba(255,255,255,0.1)",
+              pointerEvents: "none",
+              zIndex: 1000,
+            }}
+          />
+        )}
 
       {/* Tile menu shown on click */}
-      {selectedTile && map && map.getZoom() === MAX_Z && (
+      {selectedTile && map && map.getZoom() === mapConfig?.depth && (
         <div
           className="absolute pointer-events-none"
           style={{
@@ -524,8 +560,8 @@ export default function MapClient() {
           <div
             ref={menuRef}
             className="pointer-events-auto bg-white rounded-lg shadow-xl p-2 border border-gray-200"
-            onMouseDown={(e) => e.stopPropagation() || e.preventDefault()}
-            onClick={(e) => e.stopPropagation() || e.preventDefault()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="text-xs text-gray-500 mb-1">
               Tile ({selectedTile.x}, {selectedTile.y})
@@ -533,7 +569,7 @@ export default function MapClient() {
             <TileControls
               x={selectedTile.x}
               y={selectedTile.y}
-              z={MAX_Z}
+              z={mapConfig?.depth}
               exists={
                 tileExists[`${selectedTile.x},${selectedTile.y}`] || false
               }
