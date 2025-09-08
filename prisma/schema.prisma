@@ -60,10 +60,12 @@ model Tile {
   x    Int
   y    Int
   urls String[] @default([])
+  previews String[] @default([])
 
   mapId String @map("map_id")
   map   Map    @relation(fields: [mapId], references: [id])
 
+  @@unique([mapId, z, x, y])
   @@index([mapId])
   @@index([z, x, y])
   @@index([mapId, z, x, y])

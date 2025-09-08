@@ -1,9 +1,11 @@
 "use client";
 
+import { api } from "@/trpc/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tabs from "@radix-ui/react-tabs";
 import { Check, Play, Settings } from "lucide-react";
+import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 interface TileGenerateModalProps {
@@ -42,6 +44,13 @@ export function TileGenerateModal({
     new Set()
   );
   const [activeTab, setActiveTab] = useState<string>("preview");
+
+  const { id: mapId } = useParams();
+  const previewTile = api.tiles.preview.useMutation();
+  const confirmPreview = api.tiles.confirmPreview.useMutation();
+  const isGeneratingPreview = previewTile.isPending;
+  const isConfirming = confirmPreview.isPending;
+  const isAnyLoading = loading || isGeneratingPreview || isConfirming;
 
   // Load the 3x3 grid of tiles with selective cache busting
   useEffect(() => {
@@ -191,18 +200,38 @@ export function TileGenerateModal({
     setError(null);
 
     try {
-      const response = await fetch(`/api/edit-tile/${z}/${x}/${y}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+      const tile = await previewTile.mutateAsync({
+        z,
+        x,
+        y,
+        prompt,
+        mapId: mapId?.toString() ?? "",
       });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to edit tile");
+
+      // The preview should now have the S3 URL in the previews array
+      if (tile?.previews?.length) {
+        const latestPreviewUrl = tile.previews[tile.previews.length - 1];
+        setPreviewUrl(latestPreviewUrl);
+        const extractedTiles = await extractTilesFromComposite(
+          latestPreviewUrl
+        );
+        setPreviewTiles(extractedTiles);
+
+        // Initialize default selection: select all tiles by default
+        setSelectedPositions((prev) => {
+          if (prev.size > 0) return prev;
+          const sel = new Set<string>();
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const tileX = x + dx;
+              const tileY = y + dy;
+              const key = `${tileX},${tileY}`;
+              sel.add(key);
+            }
+          }
+          return sel;
+        });
       }
-      const data = await response.json();
-      setPreviewId(data.previewId);
-      await loadPreviewTiles(data.previewId, blendPreview);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -211,24 +240,24 @@ export function TileGenerateModal({
   };
 
   const handleAccept = async () => {
-    if (!previewId) return;
+    if (!previewUrl) return;
 
     setLoading(true);
 
     try {
-      const response = await fetch(`/api/confirm-edit/${z}/${x}/${y}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          previewUrl: `/api/preview/${previewId}`,
-          selectedPositions: Array.from(selectedPositions).map((s) => {
-            const [sx, sy] = s.split(",").map(Number);
-            return { x: sx, y: sy };
-          }),
+      const result = await confirmPreview.mutateAsync({
+        mapId: mapId?.toString() ?? "",
+        z,
+        x,
+        y,
+        previewUrl: previewUrl,
+        selectedPositions: Array.from(selectedPositions).map((s) => {
+          const [sx, sy] = s.split(",").map(Number);
+          return { x: sx, y: sy };
         }),
       });
-      if (!response.ok) throw new Error("Failed to confirm edits");
 
+      console.log("Confirmation result:", result);
       onUpdate();
       handleReset();
       handleClose();
@@ -243,19 +272,25 @@ export function TileGenerateModal({
     if (!prompt.trim()) return;
     setLoading(true);
     setError(null);
+
     try {
-      const response = await fetch(`/api/edit-tile/${z}/${x}/${y}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+      const tile = await previewTile.mutateAsync({
+        z,
+        x,
+        y,
+        prompt,
+        mapId: mapId?.toString() ?? "",
       });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to regenerate preview");
+
+      // The preview should now have the S3 URL in the previews array
+      if (tile?.previews?.length) {
+        const latestPreviewUrl = tile.previews[tile.previews.length - 1];
+        setPreviewUrl(latestPreviewUrl);
+        const extractedTiles = await extractTilesFromComposite(
+          latestPreviewUrl
+        );
+        setPreviewTiles(extractedTiles);
       }
-      const data = await response.json();
-      setPreviewId(data.previewId);
-      await loadPreviewTiles(data.previewId, blendPreview);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -309,7 +344,7 @@ export function TileGenerateModal({
                     placeholder="Describe what you want to generate..."
                     className="min-h-[64px] w-full resize-y rounded-xl border border-gray-300 px-3 py-2 pr-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
                     rows={3}
-                    disabled={loading}
+                    disabled={isAnyLoading}
                   />
                   <div className="absolute bottom-2 right-2">
                     <button
@@ -318,10 +353,14 @@ export function TileGenerateModal({
                       onClick={() =>
                         previewTiles ? handleRetry() : handleEdit()
                       }
-                      disabled={loading || !prompt.trim()}
+                      disabled={isAnyLoading || !prompt.trim()}
                       className="h-7 w-7 rounded-full inline-flex items-center justify-center bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed focus:outline-auto"
                     >
-                      <Play className="h-3.5 w-3.5 text-white" />
+                      {isGeneratingPreview ? (
+                        <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5 text-white" />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -444,6 +483,16 @@ export function TileGenerateModal({
                         className="relative overflow-hidden rounded-xl group mx-auto w-full aspect-square"
                         style={{ width: "min(100%, 56vmin)" }}
                       >
+                        {isGeneratingPreview && (
+                          <div className="absolute inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-10">
+                            <div className="bg-white rounded-lg p-4 flex items-center gap-3 shadow-lg">
+                              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+                              <span className="text-sm font-medium">
+                                Generating preview...
+                              </span>
+                            </div>
+                          </div>
+                        )}
                         <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 gap-0">
                           {(previewTiles || tiles).map((row, dy) =>
                             row.map((tileData, dx) => {
@@ -542,7 +591,7 @@ export function TileGenerateModal({
                   </button>
                   <button
                     onClick={handleReset}
-                    disabled={loading}
+                    disabled={isAnyLoading}
                     className="px-3 py-2 rounded-lg text-xs border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Reset Modal
@@ -550,12 +599,23 @@ export function TileGenerateModal({
                   <button
                     onClick={handleAccept}
                     disabled={
-                      loading || !previewTiles || selectedPositions.size === 0
+                      isAnyLoading ||
+                      !previewTiles ||
+                      selectedPositions.size === 0
                     }
                     className="px-3 py-2 rounded-lg text-xs bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-2"
                   >
-                    <Check className="w-4 h-4" />
-                    Accept Change
+                    {isConfirming ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                        Confirming...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Accept Change
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

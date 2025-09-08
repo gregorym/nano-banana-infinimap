@@ -2,15 +2,17 @@
 
 import { api } from "@/trpc/react";
 import { notFound } from "next/navigation";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, use } from "react";
 
 interface MapPageProps {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 export default function MapPage({ params }: MapPageProps) {
+  const { id } = use(params);
+  
   return (
     <Suspense
       fallback={
@@ -19,7 +21,7 @@ export default function MapPage({ params }: MapPageProps) {
         </div>
       }
     >
-      <MapContent mapId={params.id} />
+      <MapContent mapId={id} />
     </Suspense>
   );
 }

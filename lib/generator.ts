@@ -6,7 +6,6 @@ import { TILE, ZMAX } from "./coords";
 import ai from "./gemini";
 import { blake2sHex, hashTilePayload } from "./hashing";
 import { readTileFile, writeTileFile } from "./storage";
-import { loadStyleControl } from "./style";
 
 type NeighborDir = "N" | "S" | "E" | "W" | "NE" | "NW" | "SE" | "SW";
 const dirs: [NeighborDir, number, number][] = [
@@ -31,13 +30,11 @@ async function getNeighbors(z: number, x: number, y: number) {
 /** Generate tile using Gemini nano-banana model */
 async function runModel(input: {
   prompt: string;
-  styleName: string;
   neighbors: { dir: NeighborDir; buf: Buffer | null }[];
   seedHex: string;
 }): Promise<Buffer> {
   console.log("🎨 Starting Gemini tile generation");
   console.log("  Prompt:", input.prompt);
-  console.log("  Style:", input.styleName);
   console.log("  Seed:", input.seedHex);
 
   try {
@@ -267,7 +264,6 @@ ${prompt ? `User prompt: ${prompt}` : ""}
 /** Stub generator for fallback */
 async function runModelStub(input: {
   prompt: string;
-  styleName: string;
   neighbors: { dir: NeighborDir; buf: Buffer | null }[];
   seedHex: string;
 }): Promise<Buffer> {
@@ -327,15 +323,16 @@ export async function generateTilePreview(
   console.log(`\n🎨 generateTilePreview called for z:${z} x:${x} y:${y}`);
   console.log(`   User prompt: "${prompt}"`);
 
-  if (z !== ZMAX) throw new Error("Generation only at max zoom");
+  if (z !== ZMAX)
+    throw new Error("generateTilePreview: Generation only at max zoom");
 
-  const { name: styleName } = await loadStyleControl();
-  const seedHex = blake2sHex(
-    Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)
-  ).slice(0, 8);
+  const seedHex = blake2sHex(Buffer.from(`${z}:${x}:${y}:${prompt}`)).slice(
+    0,
+    8
+  );
 
   const neighbors = await getNeighbors(z, x, y);
-  const buf = await runModel({ prompt, styleName, neighbors, seedHex });
+  const buf = await runModel({ prompt, neighbors, seedHex });
 
   console.log(`   ✨ Tile preview generated for z:${z} x:${x} y:${y}\n`);
   return buf;
@@ -353,9 +350,9 @@ async function generateTileDescription(
         },
         {
           inlineData: {
-            data: (await composite.resize(128, 128).png().toBuffer()).toString(
-              "base64"
-            ),
+            data: (
+              await composite.resize(128, 128, { fit: "fill" }).png().toBuffer()
+            ).toString("base64"),
             mimeType: "image/png",
           },
         },
@@ -391,13 +388,11 @@ export async function generateGridPreview(
   x: number,
   y: number,
   prompt: string
-): Promise<Buffer> {
-  if (z !== ZMAX) throw new Error("Generation only at max zoom");
-
-  const { name: styleName } = await loadStyleControl();
-  const seedHex = blake2sHex(
-    Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)
-  ).slice(0, 8);
+): Promise<Buffer | null> {
+  const seedHex = blake2sHex(Buffer.from(`${z}:${x}:${y}:${prompt}`)).slice(
+    0,
+    8
+  );
   const neighbors = await getNeighbors(z, x, y);
 
   try {
@@ -535,49 +530,9 @@ ${prompt ? `User prompt: ${prompt}` : ""}
     }
     return await sharp(imgBuffer).webp({ quality: 90 }).toBuffer();
   } catch (err) {
+    console.error(err);
     // Fallback: compose neighbors and stub-generated center into a 3×3 grid
-    const center = await runModelStub({
-      prompt,
-      styleName,
-      neighbors,
-      seedHex,
-    });
-
-    const composites: sharp.OverlayOptions[] = [];
-    // Place neighbors
-    const pos = [
-      [0, 0, "NW"],
-      [1, 0, "N"],
-      [2, 0, "NE"],
-      [0, 1, "W"],
-      [1, 1, "C"],
-      [2, 1, "E"],
-      [0, 2, "SW"],
-      [1, 2, "S"],
-      [2, 2, "SE"],
-    ] as const;
-    for (const [cx, cy, key] of pos) {
-      if (key === "C") {
-        composites.push({ input: center, left: cx * TILE, top: cy * TILE });
-        continue;
-      }
-      const n = neighbors.find((nn) => nn.dir === key);
-      if (n?.buf) {
-        const resized = await sharp(n.buf).resize(TILE, TILE).toBuffer();
-        composites.push({ input: resized, left: cx * TILE, top: cy * TILE });
-      }
-    }
-    return sharp({
-      create: {
-        width: TILE * 3,
-        height: TILE * 3,
-        channels: 4,
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
-      },
-    })
-      .composite(composites)
-      .webp({ quality: 90 })
-      .toBuffer();
+    return null;
   }
 }
 
@@ -590,19 +545,19 @@ export async function generateTile(
   console.log(`\n📍 generateTile called for z:${z} x:${x} y:${y}`);
   console.log(`   User prompt: "${prompt}"`);
 
-  if (z !== ZMAX) throw new Error("Generation only at max zoom");
+  if (z !== ZMAX) throw new Error("generateTile: Generation only at max zoom");
 
   // Mark PENDING (idempotent upsert)
   const rec = await db.upsertTile({ z, x, y, status: "PENDING" });
   console.log(`   Tile marked as PENDING`);
 
-  const { name: styleName } = await loadStyleControl();
-  const seedHex = blake2sHex(
-    Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)
-  ).slice(0, 8);
+  const seedHex = blake2sHex(Buffer.from(`${z}:${x}:${y}:${prompt}`)).slice(
+    0,
+    8
+  );
 
   const neighbors = await getNeighbors(z, x, y);
-  const buf = await runModel({ prompt, styleName, neighbors, seedHex });
+  const buf = await runModel({ prompt, neighbors, seedHex });
 
   const bytesHash = blake2sHex(buf).slice(0, 16);
   const contentVer = (rec.contentVer ?? 0) + 1;

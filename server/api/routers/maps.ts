@@ -27,6 +27,7 @@ export const mapsRouter = createTRPCRouter({
     const map = await prisma.map.create({
       data: {
         userId: ctx.session.user.id,
+        depth: 8,
       },
     });
 
