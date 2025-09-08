@@ -1,3 +1,10 @@
+# Names
+
+- Infinite Map
+- Inifimap
+- Imagine Map
+- Forever map
+
 # Nano Banana Infinimap
 
 An experimental AI-powered infinite map generator that creates seamless, neighbor-aware tiles on demand.
@@ -36,22 +43,26 @@ You can use it to generate gigantic, continuous maps at a reasonable cost.
 ### Setup
 
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/yourusername/infinimap.git
 cd infinimap
 ```
 
 2. Install dependencies:
+
 ```bash
 yarn
 ```
 
 3. Configure environment variables:
+
 ```bash
 cp .env.local.example .env.local
 ```
 
 4. Add your Gemini API key to `.env.local`:
+
 ```env
 GEMINI_API_KEY=your-api-key-here
 ```
@@ -59,6 +70,7 @@ GEMINI_API_KEY=your-api-key-here
 You can obtain a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey).
 
 5. Start the development server:
+
 ```bash
 yarn dev
 ```
@@ -68,7 +80,7 @@ yarn dev
 ## Getting Started
 
 1. **Navigate the Map**: Use your mouse to pan and scroll to zoom
-2. **Generate Your First Tile**: 
+2. **Generate Your First Tile**:
    - Zoom in to the maximum level (level 8)
    - Enter a prompt like "isometric video game island" or "ancient temple ruins"
    - Click on any empty tile to generate it

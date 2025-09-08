@@ -1,19 +1,27 @@
+import fs from "fs";
+import path from "path";
 import sharp from "sharp";
-import { TILE, ZMAX } from "./coords";
-import { writeTileFile, readTileFile } from "./storage";
 import { db } from "./adapters/db.file";
-import { blake2sHex, hashTilePayload } from "./hashing";
-import { loadStyleControl } from "./style";
+import { TILE, ZMAX } from "./coords";
 import ai from "./gemini";
+import { blake2sHex, hashTilePayload } from "./hashing";
+import { readTileFile, writeTileFile } from "./storage";
+import { loadStyleControl } from "./style";
 
 type NeighborDir = "N" | "S" | "E" | "W" | "NE" | "NW" | "SE" | "SW";
 const dirs: [NeighborDir, number, number][] = [
-  ["N", 0, -1], ["S", 0, 1], ["E", 1, 0], ["W", -1, 0],
-  ["NE", 1, -1], ["NW", -1, -1], ["SE", 1, 1], ["SW", -1, 1],
+  ["N", 0, -1],
+  ["S", 0, 1],
+  ["E", 1, 0],
+  ["W", -1, 0],
+  ["NE", 1, -1],
+  ["NW", -1, -1],
+  ["SE", 1, 1],
+  ["SW", -1, 1],
 ];
 
 async function getNeighbors(z: number, x: number, y: number) {
-  const out: { dir: NeighborDir, buf: Buffer | null }[] = [];
+  const out: { dir: NeighborDir; buf: Buffer | null }[] = [];
   for (const [dir, dx, dy] of dirs) {
     out.push({ dir, buf: await readTileFile(z, x + dx, y + dy) });
   }
@@ -24,13 +32,13 @@ async function getNeighbors(z: number, x: number, y: number) {
 async function runModel(input: {
   prompt: string;
   styleName: string;
-  neighbors: { dir: NeighborDir, buf: Buffer | null }[];
+  neighbors: { dir: NeighborDir; buf: Buffer | null }[];
   seedHex: string;
 }): Promise<Buffer> {
-  console.log('🎨 Starting Gemini tile generation');
-  console.log('  Prompt:', input.prompt);
-  console.log('  Style:', input.styleName);
-  console.log('  Seed:', input.seedHex);
+  console.log("🎨 Starting Gemini tile generation");
+  console.log("  Prompt:", input.prompt);
+  console.log("  Style:", input.styleName);
+  console.log("  Seed:", input.seedHex);
 
   try {
     // Create a 3x3 grid (768x768) with the center marked for generation
@@ -45,11 +53,21 @@ async function runModel(input: {
     const checkerboardSvg = `
       <svg width="${gridSize}" height="${gridSize}" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <pattern id="checkerboard" x="0" y="0" width="${checkerSize * 2}" height="${checkerSize * 2}" patternUnits="userSpaceOnUse">
-            <rect x="0" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${white.r},${white.g},${white.b})" />
-            <rect x="${checkerSize}" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${lightGrey.r},${lightGrey.g},${lightGrey.b})" />
-            <rect x="0" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${lightGrey.r},${lightGrey.g},${lightGrey.b})" />
-            <rect x="${checkerSize}" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${white.r},${white.g},${white.b})" />
+          <pattern id="checkerboard" x="0" y="0" width="${
+            checkerSize * 2
+          }" height="${checkerSize * 2}" patternUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      white.r
+    },${white.g},${white.b})" />
+            <rect x="${checkerSize}" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      lightGrey.r
+    },${lightGrey.g},${lightGrey.b})" />
+            <rect x="0" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      lightGrey.r
+    },${lightGrey.g},${lightGrey.b})" />
+            <rect x="${checkerSize}" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      white.r
+    },${white.g},${white.b})" />
           </pattern>
         </defs>
         <rect width="${gridSize}" height="${gridSize}" fill="url(#checkerboard)" />
@@ -65,77 +83,82 @@ async function runModel(input: {
     // Center stays black (no green square needed)
 
     // Map neighbors to grid positions
-    const neighborPositions: { [key: string]: { x: number, y: number } } = {
-      'NW': { x: 0, y: 0 }, 'N': { x: TILE, y: 0 }, 'NE': { x: TILE * 2, y: 0 },
-      'W': { x: 0, y: TILE },    /* CENTER */                'E': { x: TILE * 2, y: TILE },
-      'SW': { x: 0, y: TILE * 2 }, 'S': { x: TILE, y: TILE * 2 }, 'SE': { x: TILE * 2, y: TILE * 2 }
+    const neighborPositions: { [key: string]: { x: number; y: number } } = {
+      NW: { x: 0, y: 0 },
+      N: { x: TILE, y: 0 },
+      NE: { x: TILE * 2, y: 0 },
+      W: { x: 0, y: TILE },
+      /* CENTER */ E: { x: TILE * 2, y: TILE },
+      SW: { x: 0, y: TILE * 2 },
+      S: { x: TILE, y: TILE * 2 },
+      SE: { x: TILE * 2, y: TILE * 2 },
     };
 
     // Add existing neighbors
-    const neighborCount = input.neighbors.filter(n => n.buf !== null).length;
-    console.log('  Neighbors with content:', neighborCount);
+    const neighborCount = input.neighbors.filter((n) => n.buf !== null).length;
+    console.log("  Neighbors with content:", neighborCount);
 
     for (const n of input.neighbors) {
       if (n.buf && neighborPositions[n.dir]) {
         const pos = neighborPositions[n.dir];
         // Ensure neighbor is exactly 256x256
         const resized = await sharp(n.buf)
-          .resize(TILE, TILE, { fit: 'fill' })
+          .resize(TILE, TILE, { fit: "fill" })
           .toBuffer();
         compositeImages.push({
           input: resized,
           left: pos.x,
-          top: pos.y
+          top: pos.y,
         });
       }
     }
 
     // Create the composite grid
-    const gridImage = await canvas
-      .composite(compositeImages)
-      .png()
-      .toBuffer();
-
-    console.log('  Created 3x3 grid context image');
-
-    // Debug: Save the grid (enable for debugging)
-    const DEBUG_MODE = true; // Set to true to save debug images
-    if (DEBUG_MODE) {
-      await sharp(gridImage).toFile(`.debug/debug-grid-${input.seedHex}.png`);
-      console.log(`  Saved debug grid: .debug/debug-grid-${input.seedHex}.png`);
-    }
+    const gridComposite = await canvas.composite(compositeImages);
+    const gridImage = await gridComposite.png().toBuffer();
+    const tileDescription = await generateTileDescription(gridComposite);
 
     // Convert to base64 for Gemini
-    const gridBase64 = gridImage.toString('base64');
+    const gridBase64 = gridImage.toString("base64");
 
     // Build the prompt
-    const fullPrompt = `complete image. do not modify existing art's position or content.
+    const fullPrompt = `
+Context:
+    ${tileDescription}
 
-Style: ${input.styleName}
-Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}`;
+Rules:
+  - Whole checkered pattern should be replaced.
+  - If it's land, expand the land. Do not add a sky.
+
+Instructions: 
+Expand the 2D map scene in the checkerboard area. Do not modify existing art's position or content.
+
+${prompt ? `User prompt: ${prompt}` : ""}
+`.trim();
 
     const userParts: any[] = [
       { text: fullPrompt },
       {
         inlineData: {
           data: gridBase64,
-          mimeType: 'image/png'
-        }
-      }
+          mimeType: "image/png",
+        },
+      },
     ];
 
-    const contents = [{
-      role: 'user',
-      parts: userParts
-    }];
+    const contents = [
+      {
+        role: "user",
+        parts: userParts,
+      },
+    ];
 
     const config = {
-      responseModalities: ['IMAGE'],
+      responseModalities: ["IMAGE"],
     };
 
-    const model = 'gemini-2.5-flash-image-preview';
-
-    console.log('  Calling Gemini API with model:', model);
+    const model = "gemini-2.5-flash-image-preview";
+    console.log("  Calling Gemini API with model:", model);
     const startTime = Date.now();
 
     const response = await ai.models.generateContentStream({
@@ -154,7 +177,10 @@ Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}
       if (chunk.candidates && chunk.candidates.length > 0) {
         const candidate = chunk.candidates[0];
 
-        if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'PROHIBITED_CONTENT') {
+        if (
+          candidate.finishReason === "SAFETY" ||
+          candidate.finishReason === "PROHIBITED_CONTENT"
+        ) {
           throw new Error(`Content blocked: ${candidate.finishReason}`);
         }
 
@@ -171,25 +197,21 @@ Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}
     }
 
     if (!imageBase64) {
-      throw new Error('No image generated from Gemini');
+      throw new Error("No image generated from Gemini");
     }
 
     const elapsedTime = Date.now() - startTime;
     console.log(`  ✅ Image generated successfully in ${elapsedTime}ms`);
 
     // Convert base64 to buffer
-    const imgBuffer = Buffer.from(imageBase64, 'base64');
+    const imgBuffer = Buffer.from(imageBase64, "base64");
     console.log(`  Full grid image size: ${imgBuffer.length} bytes`);
 
     // Check the actual dimensions of the returned image
     const metadata = await sharp(imgBuffer).metadata();
-    console.log(`  Returned image dimensions: ${metadata.width}x${metadata.height}`);
-
-    // Debug: Save the response
-    if (DEBUG_MODE) {
-      await sharp(imgBuffer).toFile(`.debug/debug-response-${input.seedHex}.png`);
-      console.log(`  Saved debug response: .debug/debug-response-${input.seedHex}.png`);
-    }
+    console.log(
+      `  Returned image dimensions: ${metadata.width}x${metadata.height}`
+    );
 
     // Calculate extraction coordinates based on actual image size
     let extractLeft = TILE;
@@ -198,7 +220,9 @@ Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}
     let extractHeight = TILE;
 
     if (metadata.width !== gridSize || metadata.height !== gridSize) {
-      console.log(`  ⚠️ Warning: Expected 768x768 but got ${metadata.width}x${metadata.height}`);
+      console.log(
+        `  ⚠️ Warning: Expected 768x768 but got ${metadata.width}x${metadata.height}`
+      );
 
       if (metadata.width && metadata.height) {
         // Calculate scale factor
@@ -210,7 +234,11 @@ Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}
         extractWidth = Math.floor(TILE * scale);
         extractHeight = Math.floor(TILE * scale);
 
-        console.log(`  Scaling extraction by ${scale.toFixed(2)}x: extracting ${extractWidth}x${extractHeight} from position (${extractLeft}, ${extractTop})`);
+        console.log(
+          `  Scaling extraction by ${scale.toFixed(
+            2
+          )}x: extracting ${extractWidth}x${extractHeight} from position (${extractLeft}, ${extractTop})`
+        );
       }
     }
 
@@ -220,17 +248,17 @@ Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}
         left: extractLeft,
         top: extractTop,
         width: extractWidth,
-        height: extractHeight
+        height: extractHeight,
       })
-      .resize(TILE, TILE, { kernel: 'lanczos3' }) // Ensure final size is always 256x256
+      .resize(TILE, TILE, { kernel: "lanczos3" }) // Ensure final size is always 256x256
       .webp({ quality: 90 })
       .toBuffer();
 
     console.log(`  Extracted center tile: ${centerTile.length} bytes`);
     return centerTile;
   } catch (error) {
-    console.error('❌ Gemini generation error:', error);
-    console.log('  Falling back to stub generator');
+    console.error("❌ Gemini generation error:", error);
+    console.log("  Falling back to stub generator");
     // Fallback to stub generator on error
     return runModelStub(input);
   }
@@ -240,14 +268,20 @@ Additional context: ${input.prompt || 'tropical islands with beaches and ocean'}
 async function runModelStub(input: {
   prompt: string;
   styleName: string;
-  neighbors: { dir: NeighborDir, buf: Buffer | null }[];
+  neighbors: { dir: NeighborDir; buf: Buffer | null }[];
   seedHex: string;
 }): Promise<Buffer> {
   const base = sharp({
     create: {
-      width: TILE, height: TILE, channels: 3,
-      background: { r: parseInt(input.seedHex.slice(0, 2), 16), g: parseInt(input.seedHex.slice(2, 4), 16), b: (input.prompt.length * 19) % 255 }
-    }
+      width: TILE,
+      height: TILE,
+      channels: 3,
+      background: {
+        r: parseInt(input.seedHex.slice(0, 2), 16),
+        g: parseInt(input.seedHex.slice(2, 4), 16),
+        b: (input.prompt.length * 19) % 255,
+      },
+    },
   }).png();
 
   let img = await base.toBuffer();
@@ -256,13 +290,17 @@ async function runModelStub(input: {
   for (const n of input.neighbors) {
     if (!n.buf) continue;
     const line = Buffer.from(
-      `<svg width="${TILE}" height="${TILE}"><rect ${edgeRect(n.dir)} fill="#ffffff" fill-opacity="0.15"/></svg>`
+      `<svg width="${TILE}" height="${TILE}"><rect ${edgeRect(
+        n.dir
+      )} fill="#ffffff" fill-opacity="0.15"/></svg>`
     );
     overlays.push(await sharp(line).png().toBuffer());
   }
 
   if (overlays.length) {
-    img = await sharp(img).composite(overlays.map(o => ({ input: o }))).toBuffer();
+    img = await sharp(img)
+      .composite(overlays.map((o) => ({ input: o })))
+      .toBuffer();
   }
   return await sharp(img).webp({ quality: 90 }).toBuffer();
 }
@@ -274,19 +312,27 @@ function edgeRect(dir: NeighborDir): string {
   if (dir === "E") return `x="${TILE - 1}" y="0" width="1" height="${TILE}"`;
   if (dir === "NE") return `x="${TILE - 1}" y="0" width="1" height="1"`;
   if (dir === "NW") return `x="0" y="0" width="1" height="1"`;
-  if (dir === "SE") return `x="${TILE - 1}" y="${TILE - 1}" width="1" height="1"`;
+  if (dir === "SE")
+    return `x="${TILE - 1}" y="${TILE - 1}" width="1" height="1"`;
   return `x="0" y="${TILE - 1}" width="1" height="1"`;
 }
 
 /** Generate a tile preview without saving to disk */
-export async function generateTilePreview(z: number, x: number, y: number, prompt: string): Promise<Buffer> {
+export async function generateTilePreview(
+  z: number,
+  x: number,
+  y: number,
+  prompt: string
+): Promise<Buffer> {
   console.log(`\n🎨 generateTilePreview called for z:${z} x:${x} y:${y}`);
   console.log(`   User prompt: "${prompt}"`);
 
   if (z !== ZMAX) throw new Error("Generation only at max zoom");
 
   const { name: styleName } = await loadStyleControl();
-  const seedHex = blake2sHex(Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)).slice(0, 8);
+  const seedHex = blake2sHex(
+    Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)
+  ).slice(0, 8);
 
   const neighbors = await getNeighbors(z, x, y);
   const buf = await runModel({ prompt, styleName, neighbors, seedHex });
@@ -295,16 +341,63 @@ export async function generateTilePreview(z: number, x: number, y: number, promp
   return buf;
 }
 
+async function generateTileDescription(
+  composite: sharp.Sharp
+): Promise<string> {
+  const contents = [
+    {
+      role: "user",
+      parts: [
+        {
+          text: "Describe the image. Do not describe the checkered pattern in your description",
+        },
+        {
+          inlineData: {
+            data: (await composite.resize(128, 128).png().toBuffer()).toString(
+              "base64"
+            ),
+            mimeType: "image/png",
+          },
+        },
+      ],
+    },
+  ];
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash-lite",
+    config: { responseModalities: ["TEXT"] },
+    contents,
+  });
+
+  if (
+    response.candidates &&
+    response.candidates.length > 0 &&
+    response.candidates[0].content?.parts &&
+    response.candidates[0].content.parts.length > 0 &&
+    response.candidates[0].content.parts[0].text
+  ) {
+    return response.candidates[0].content.parts[0].text;
+  }
+  return "No description available";
+}
+
 /**
  * Generate a full 3×3 grid preview image (768×768 WebP) containing
  * the model's predicted content for the neighborhood. Used by the
  * edit preview modal so empty cells can display inbound content.
  */
-export async function generateGridPreview(z: number, x: number, y: number, prompt: string): Promise<Buffer> {
+export async function generateGridPreview(
+  z: number,
+  x: number,
+  y: number,
+  prompt: string
+): Promise<Buffer> {
   if (z !== ZMAX) throw new Error("Generation only at max zoom");
 
   const { name: styleName } = await loadStyleControl();
-  const seedHex = blake2sHex(Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)).slice(0, 8);
+  const seedHex = blake2sHex(
+    Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)
+  ).slice(0, 8);
   const neighbors = await getNeighbors(z, x, y);
 
   try {
@@ -318,11 +411,21 @@ export async function generateGridPreview(z: number, x: number, y: number, promp
     const checkerboardSvg = `
       <svg width="${gridSize}" height="${gridSize}" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <pattern id="checkerboard" x="0" y="0" width="${checkerSize * 2}" height="${checkerSize * 2}" patternUnits="userSpaceOnUse">
-            <rect x="0" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${white.r},${white.g},${white.b})" />
-            <rect x="${checkerSize}" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${lightGrey.r},${lightGrey.g},${lightGrey.b})" />
-            <rect x="0" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${lightGrey.r},${lightGrey.g},${lightGrey.b})" />
-            <rect x="${checkerSize}" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${white.r},${white.g},${white.b})" />
+          <pattern id="checkerboard" x="0" y="0" width="${
+            checkerSize * 2
+          }" height="${checkerSize * 2}" patternUnits="userSpaceOnUse">
+            <rect x="0" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      white.r
+    },${white.g},${white.b})" />
+            <rect x="${checkerSize}" y="0" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      lightGrey.r
+    },${lightGrey.g},${lightGrey.b})" />
+            <rect x="0" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      lightGrey.r
+    },${lightGrey.g},${lightGrey.b})" />
+            <rect x="${checkerSize}" y="${checkerSize}" width="${checkerSize}" height="${checkerSize}" fill="rgb(${
+      white.r
+    },${white.g},${white.b})" />
           </pattern>
         </defs>
         <rect width="${gridSize}" height="${gridSize}" fill="url(#checkerboard)" />
@@ -331,36 +434,75 @@ export async function generateGridPreview(z: number, x: number, y: number, promp
 
     const canvas = sharp(Buffer.from(checkerboardSvg));
 
-    const neighborPositions: { [key: string]: { x: number, y: number } } = {
-      'NW': { x: 0, y: 0 }, 'N': { x: TILE, y: 0 }, 'NE': { x: TILE * 2, y: 0 },
-      'W': { x: 0, y: TILE }, 'E': { x: TILE * 2, y: TILE },
-      'SW': { x: 0, y: TILE * 2 }, 'S': { x: TILE, y: TILE * 2 }, 'SE': { x: TILE * 2, y: TILE * 2 }
+    const neighborPositions: { [key: string]: { x: number; y: number } } = {
+      NW: { x: 0, y: 0 },
+      N: { x: TILE, y: 0 },
+      NE: { x: TILE * 2, y: 0 },
+      W: { x: 0, y: TILE },
+      E: { x: TILE * 2, y: TILE },
+      SW: { x: 0, y: TILE * 2 },
+      S: { x: TILE, y: TILE * 2 },
+      SE: { x: TILE * 2, y: TILE * 2 },
     };
 
     const compositeImages: sharp.OverlayOptions[] = [];
     for (const n of neighbors) {
       if (n.buf && neighborPositions[n.dir]) {
         const pos = neighborPositions[n.dir];
-        const resized = await sharp(n.buf).resize(TILE, TILE, { fit: 'fill' }).toBuffer();
+        const resized = await sharp(n.buf)
+          .resize(TILE, TILE, { fit: "fill" })
+          .toBuffer();
         compositeImages.push({ input: resized, left: pos.x, top: pos.y });
       }
     }
 
-    const gridContext = await canvas.composite(compositeImages).png().toBuffer();
+    const gridComposite = await canvas.composite(compositeImages);
+    const gridContext = await gridComposite.png().toBuffer();
+    const tileDescription = await generateTileDescription(gridComposite);
+
+    const previewPath = path.join(process.cwd(), ".temp", `${seedHex}.webp`);
+    fs.writeFileSync(previewPath, gridContext);
+
+    /*
+This is a charming cartoon illustration of a peaceful countryside scene with a prominent hill. Several stylized trees with round green tops and brown trunks are scattered across the rolling green landscape. A small pond with blue water sits in the foreground, with a bright orange fish leaping out of it, creating a splash. In the lower left corner, a small white sheep is visible. A hint of a chimney with smoke billowing from it can be seen near the pond, suggesting a dwelling nearby. The background is a transparent checkered pattern, indicating the image is likely intended for graphic design or digital art purposes.
+
+Expand the 2D map scene in the checkerboard area. Do not modify existing art's position or content.
+    */
 
     // Send the full grid to the model
-    const fullPrompt = `complete image. do not modify existing art's position or content.\n\nStyle: ${styleName}\nAdditional context: ${prompt}`;
-    const contents = [{
-      role: 'user',
-      parts: [
-        { text: fullPrompt },
-        { inlineData: { data: gridContext.toString('base64'), mimeType: 'image/png' } }
-      ]
-    }];
+    // const fullPrompt = `complete image and fill all blank spaces. do not modify existing art's position or content.\n\nAdditional context: ${prompt}`;
+    const fullPrompt = `
+Context:
+    ${tileDescription}
+
+Rules:
+  - Whole checkered pattern should be replaced.
+  - If it's land, expand the land. Do not add a sky.
+
+Instructions: 
+Expand the 2D map scene in the checkerboard area. Do not modify existing art's position or content.
+
+${prompt ? `User prompt: ${prompt}` : ""}
+`.trim();
+
+    const contents = [
+      {
+        role: "user",
+        parts: [
+          { text: fullPrompt },
+          {
+            inlineData: {
+              data: gridContext.toString("base64"),
+              mimeType: "image/png",
+            },
+          },
+        ],
+      },
+    ];
 
     const response = await ai.models.generateContentStream({
-      model: 'gemini-2.5-flash-image-preview',
-      config: { responseModalities: ['IMAGE'] },
+      model: "gemini-2.5-flash-image-preview",
+      config: { responseModalities: ["IMAGE"] },
       contents,
     });
 
@@ -370,52 +512,81 @@ export async function generateGridPreview(z: number, x: number, y: number, promp
         const candidate = chunk.candidates[0];
         if (candidate.content?.parts) {
           for (const part of candidate.content.parts) {
-            if (part.inlineData?.data) { imageBase64 = part.inlineData.data; break; }
+            if (part.inlineData?.data) {
+              imageBase64 = part.inlineData.data;
+              break;
+            }
           }
           if (imageBase64) break;
         }
       }
     }
 
-    if (!imageBase64) throw new Error('No image generated from Gemini');
-    let imgBuffer = Buffer.from(imageBase64, 'base64');
+    if (!imageBase64) throw new Error("No image generated from Gemini");
+    let imgBuffer = Buffer.from(imageBase64, "base64");
 
     // Normalize to 768×768 and WebP
     const meta = await sharp(imgBuffer).metadata();
     if (meta.width !== gridSize || meta.height !== gridSize) {
       // @ts-expect-error TODO: fix types
-      imgBuffer = await sharp(imgBuffer).resize(gridSize, gridSize, { fit: 'fill' }).toBuffer();
+      imgBuffer = await sharp(imgBuffer)
+        .resize(gridSize, gridSize, { fit: "fill" })
+        .toBuffer();
     }
     return await sharp(imgBuffer).webp({ quality: 90 }).toBuffer();
   } catch (err) {
     // Fallback: compose neighbors and stub-generated center into a 3×3 grid
-    const center = await runModelStub({ prompt, styleName, neighbors, seedHex });
+    const center = await runModelStub({
+      prompt,
+      styleName,
+      neighbors,
+      seedHex,
+    });
 
     const composites: sharp.OverlayOptions[] = [];
     // Place neighbors
     const pos = [
-      [0, 0, 'NW'], [1, 0, 'N'], [2, 0, 'NE'],
-      [0, 1, 'W'], [1, 1, 'C'], [2, 1, 'E'],
-      [0, 2, 'SW'], [1, 2, 'S'], [2, 2, 'SE']
+      [0, 0, "NW"],
+      [1, 0, "N"],
+      [2, 0, "NE"],
+      [0, 1, "W"],
+      [1, 1, "C"],
+      [2, 1, "E"],
+      [0, 2, "SW"],
+      [1, 2, "S"],
+      [2, 2, "SE"],
     ] as const;
     for (const [cx, cy, key] of pos) {
-      if (key === 'C') {
+      if (key === "C") {
         composites.push({ input: center, left: cx * TILE, top: cy * TILE });
         continue;
       }
-      const n = neighbors.find(nn => nn.dir === key);
+      const n = neighbors.find((nn) => nn.dir === key);
       if (n?.buf) {
         const resized = await sharp(n.buf).resize(TILE, TILE).toBuffer();
         composites.push({ input: resized, left: cx * TILE, top: cy * TILE });
       }
     }
     return sharp({
-      create: { width: TILE * 3, height: TILE * 3, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }
-    }).composite(composites).webp({ quality: 90 }).toBuffer();
+      create: {
+        width: TILE * 3,
+        height: TILE * 3,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      },
+    })
+      .composite(composites)
+      .webp({ quality: 90 })
+      .toBuffer();
   }
 }
 
-export async function generateTile(z: number, x: number, y: number, prompt: string) {
+export async function generateTile(
+  z: number,
+  x: number,
+  y: number,
+  prompt: string
+) {
   console.log(`\n📍 generateTile called for z:${z} x:${x} y:${y}`);
   console.log(`   User prompt: "${prompt}"`);
 
@@ -426,7 +597,9 @@ export async function generateTile(z: number, x: number, y: number, prompt: stri
   console.log(`   Tile marked as PENDING`);
 
   const { name: styleName } = await loadStyleControl();
-  const seedHex = blake2sHex(Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)).slice(0, 8);
+  const seedHex = blake2sHex(
+    Buffer.from(`${z}:${x}:${y}:${styleName}:${prompt}`)
+  ).slice(0, 8);
 
   const neighbors = await getNeighbors(z, x, y);
   const buf = await runModel({ prompt, styleName, neighbors, seedHex });
@@ -434,18 +607,26 @@ export async function generateTile(z: number, x: number, y: number, prompt: stri
   const bytesHash = blake2sHex(buf).slice(0, 16);
   const contentVer = (rec.contentVer ?? 0) + 1;
   const hash = hashTilePayload({
-    algorithmVersion: 1, contentVer, bytesHash, seed: seedHex
+    algorithmVersion: 1,
+    contentVer,
+    bytesHash,
+    seed: seedHex,
   });
 
   await writeTileFile(z, x, y, buf);
   console.log(`   Tile file written to disk`);
 
-  const updated = await db.updateTile(z, x, y, { status: "READY", hash, contentVer, seed: seedHex });
+  const updated = await db.updateTile(z, x, y, {
+    status: "READY",
+    hash,
+    contentVer,
+    seed: seedHex,
+  });
   console.log(`   Tile marked as READY with hash: ${updated.hash}`);
   console.log(`   ✨ Tile generation complete for z:${z} x:${x} y:${y}\n`);
 
   // Generate parent tiles automatically
-  generateParentTilesForChild(z, x, y).catch(err =>
+  generateParentTilesForChild(z, x, y).catch((err) =>
     console.error(`Failed to generate parent tiles: ${err}`)
   );
 

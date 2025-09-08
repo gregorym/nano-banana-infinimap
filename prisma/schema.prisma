@@ -1,3 +1,4 @@
+
 generator client {
   provider = "prisma-client-js"
   output   = "../app/generated/prisma"
@@ -9,28 +10,106 @@ datasource db {
 }
 
 model User {
-  id    Int     @id @default(autoincrement())
-  email String  @unique
-  name  String?
+  id            String       @id @default(cuid())
+  email         String    @unique
+  name          String?
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
 
-  maps Map[]
+  userMaps UserMap[]
+  maps     Map[]
+  sessions Session[]
+  accounts Account[]
+
+  @@index([email])
+  @@map("user")
 }
 
 model Map {
-  id        String     @id @default(cuid())
-  user_id  Int
-  user    User    @relation(fields: [user_id], references: [id])
+  id     String @id @default(cuid())
+  userId String
 
-  tiles Tile[]
+  owner    User      @relation(fields: [userId], references: [id])
+  tiles    Tile[]
+  userMaps UserMap[]
+
+  @@index([id])
+  @@map("map")
+}
+
+model UserMap {
+  id     Int    @id @default(autoincrement())
+  userId String    @map("user_id")
+  mapId  String @map("map_id")
+  
+  user User @relation(fields: [userId], references: [id])
+  map  Map  @relation(fields: [mapId], references: [id])
+
+  @@unique([userId, mapId])
+  @@index([userId])
+  @@index([mapId])
+  @@map("user_map")
 }
 
 model Tile {
-  id Int @id @default(autoincrement())
-  z Int
-  x Int
-  y Int
+  id   Int      @id @default(autoincrement())
+  z    Int
+  x    Int
+  y    Int
   urls String[] @default([])
 
-  map_id String
-  map   Map    @relation(fields: [map_id], references: [id])
+  mapId String @map("map_id")
+  map   Map    @relation(fields: [mapId], references: [id])
+
+  @@index([mapId])
+  @@index([z, x, y])
+  @@index([mapId, z, x, y])
+  @@map("tile")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@map("verification")
 }

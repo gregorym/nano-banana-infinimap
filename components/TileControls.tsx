@@ -177,8 +177,7 @@ export default function TileControls({
       {/* Generate/Regenerate Modal */}
       <TileGenerateModal
         open={generateModalOpen}
-        // onClose={() => setGenerateModalOpen(false)}
-        onClose={() => console.log("Close modal")}
+        onClose={() => setGenerateModalOpen(false)}
         x={x}
         y={y}
         z={z}

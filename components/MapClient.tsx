@@ -41,19 +41,19 @@ export default function MapClient() {
   }, [selectedTile]);
 
   // Close menu when clicking anywhere outside of it
-  useEffect(() => {
-    const onPointerDown = (e: PointerEvent) => {
-      if (!selectedTileRef.current) return;
-      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
-      setSelectedTile(null);
-      selectedTileRef.current = null;
-      // Prevent the same click from immediately re-opening via map click
-      suppressOpenUntil.current = performance.now() + 250;
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () =>
-      document.removeEventListener("pointerdown", onPointerDown, true);
-  }, []);
+  // useEffect(() => {
+  //   const onPointerDown = (e: PointerEvent) => {
+  //     if (!selectedTileRef.current) return;
+  //     if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
+  //     setSelectedTile(null);
+  //     selectedTileRef.current = null;
+  //     // Prevent the same click from immediately re-opening via map click
+  //     suppressOpenUntil.current = performance.now() + 250;
+  //   };
+  //   document.addEventListener("pointerdown", onPointerDown, true);
+  //   return () =>
+  //     document.removeEventListener("pointerdown", onPointerDown, true);
+  // }, []);
 
   // Update URL with debouncing
   const updateURL = useCallback((m: any) => {

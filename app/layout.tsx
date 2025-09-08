@@ -1,19 +1,22 @@
-import type { Metadata } from 'next'
-import './globals.css'
+import { TRPCReactProvider } from "@/trpc/react";
+import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: 'Infinimap',
-  description: 'Generative, neighbor-aware slippy map',
-}
+  title: "Infinimap",
+  description: "Generative, neighbor-aware slippy map",
+};
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html>
+      <body>
+        <TRPCReactProvider>{children}</TRPCReactProvider>
+      </body>
     </html>
-  )
+  );
 }
