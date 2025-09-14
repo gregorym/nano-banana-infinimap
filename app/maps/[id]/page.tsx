@@ -54,6 +54,6 @@ function MapContent({ mapId }: { mapId: string }) {
 }
 
 function MapClient({ mapId }: { mapId: string }) {
-  const MapClientComponent = lazy(() => import("@/components/MapClient"));
+  const MapClientComponent = lazy(() => import("@/components/PixiMapClient"));
   return <MapClientComponent mapId={mapId} />;
 }

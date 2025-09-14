@@ -11,6 +11,7 @@ export default function Page() {
 }
 
 async function ClientBoundary() {
-  const MapClient = (await import("@/components/MapClient")).default;
-  return <MapClient />;
+  const PixiMapClient = (await import("@/components/PixiMapClient")).default;
+  // Use a default map ID for the legacy /map route
+  return <PixiMapClient mapId="default" />;
 }
