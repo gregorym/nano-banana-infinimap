@@ -475,7 +475,7 @@ Rules:
   - If it's land, expand the land. Do not add a sky.
 
 Instructions: 
-Expand the 2D map scene in the checkerboard area. Do not modify existing art's position or content.
+Expand the 2D map scene in the checkerboard area. Do not modify existing art's position or content unless explicitly instructed.
 
 ${prompt ? `User prompt: ${prompt}` : ""}
 `.trim();

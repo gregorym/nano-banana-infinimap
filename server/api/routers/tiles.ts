@@ -1,8 +1,7 @@
+import { TILE } from "@/lib/coords";
 import { generateGridPreview } from "@/lib/generator";
 import { prisma } from "@/lib/prisma";
 import { generatePreviewKey, generateTileKey, uploadImageToS3 } from "@/lib/s3";
-import { blake2sHex } from "@/lib/hashing";
-import { TILE, parentOf } from "@/lib/coords";
 import sharp from "sharp";
 import z from "zod";
 import { createTRPCRouter, publicProcedure } from "../trpc";
@@ -16,7 +15,13 @@ export const tilesRouter = createTRPCRouter({
         count: z.number().default(100),
       })
     )
-    .query(() => {}),
+    .query(({ input }) => {
+      const tiles = prisma.tile.findMany({
+        where: { mapId: input.mapId },
+      });
+
+      return tiles;
+    }),
   preview: publicProcedure
     .input(
       z.object({
@@ -98,15 +103,26 @@ export const tilesRouter = createTRPCRouter({
         x: z.number(), // center tile
         y: z.number(), // center tile
         previewUrl: z.string(),
-        selectedPositions: z.array(z.object({
-          x: z.number(),
-          y: z.number(),
-        })).optional(),
+        selectedPositions: z
+          .array(
+            z.object({
+              x: z.number(),
+              y: z.number(),
+            })
+          )
+          .optional(),
       })
     )
     .mutation(async ({ input }) => {
-      const { mapId, z, x: centerX, y: centerY, previewUrl, selectedPositions } = input;
-      
+      const {
+        mapId,
+        z,
+        x: centerX,
+        y: centerY,
+        previewUrl,
+        selectedPositions,
+      } = input;
+
       // Find the preview tile to get the preview buffer
       const previewTile = await prisma.tile.findFirst({
         where: { mapId, z, x: centerX, y: centerY },
@@ -117,8 +133,9 @@ export const tilesRouter = createTRPCRouter({
       }
 
       // For now, we'll assume the preview is the latest one
-      const latestPreview = previewTile.previews[previewTile.previews.length - 1];
-      
+      const latestPreview =
+        previewTile.previews[previewTile.previews.length - 1];
+
       // Fetch the preview image from S3 URL
       const response = await fetch(latestPreview);
       if (!response.ok) {
@@ -128,8 +145,8 @@ export const tilesRouter = createTRPCRouter({
 
       // Extract individual tiles from the composite
       const genTiles = await extractTiles(compositeBuffer);
-      const selectedSet = selectedPositions?.length 
-        ? new Set(selectedPositions.map(p => `${p.x},${p.y}`))
+      const selectedSet = selectedPositions?.length
+        ? new Set(selectedPositions.map((p) => `${p.x},${p.y}`))
         : null;
 
       // Create circular gradient mask for blending
@@ -161,33 +178,38 @@ export const tilesRouter = createTRPCRouter({
             try {
               const existingResponse = await fetch(existingTile.urls[0]);
               if (existingResponse.ok) {
-                const existsBuf = Buffer.from(await existingResponse.arrayBuffer());
-                
+                const existsBuf = Buffer.from(
+                  await existingResponse.arrayBuffer()
+                );
+
                 // Create tile-specific mask
                 const tileMask = await sharp(mask3x3)
-                  .extract({ 
-                    left: (dx + 1) * TILE, 
-                    top: (dy + 1) * TILE, 
-                    width: TILE, 
-                    height: TILE 
+                  .extract({
+                    left: (dx + 1) * TILE,
+                    top: (dy + 1) * TILE,
+                    width: TILE,
+                    height: TILE,
                   })
                   .png()
                   .toBuffer();
 
                 // Blend generated tile over existing
                 const maskedGen = await sharp(genTile)
-                  .composite([{ input: tileMask, blend: 'dest-in' }])
+                  .composite([{ input: tileMask, blend: "dest-in" }])
                   .webp()
                   .toBuffer();
 
                 finalTile = await sharp(existsBuf)
-                  .resize(TILE, TILE, { fit: 'fill' })
-                  .composite([{ input: maskedGen, blend: 'over' }])
+                  .resize(TILE, TILE, { fit: "fill" })
+                  .composite([{ input: maskedGen, blend: "over" }])
                   .webp()
                   .toBuffer();
               }
             } catch (err) {
-              console.warn(`Failed to blend tile ${tileX},${tileY}, using new tile:`, err);
+              console.warn(
+                `Failed to blend tile ${tileX},${tileY}, using new tile:`,
+                err
+              );
             }
           }
 
@@ -234,7 +256,7 @@ export const tilesRouter = createTRPCRouter({
 // Helper functions
 async function extractTiles(compositeBuffer: Buffer): Promise<Buffer[][]> {
   const tiles: Buffer[][] = [];
-  
+
   for (let y = 0; y < 3; y++) {
     const row: Buffer[] = [];
     for (let x = 0; x < 3; x++) {
@@ -251,29 +273,34 @@ async function extractTiles(compositeBuffer: Buffer): Promise<Buffer[][]> {
     }
     tiles.push(row);
   }
-  
+
   return tiles;
 }
 
 async function createCircularGradientMask(size: number): Promise<Buffer> {
   const center = size / 2;
   const radius = size / 2;
-  const width = size, height = size, channels = 4;
+  const width = size,
+    height = size,
+    channels = 4;
   const buf = Buffer.alloc(width * height * channels);
-  
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const dx = x - center, dy = y - center;
-      const d = Math.sqrt(dx*dx + dy*dy);
+      const dx = x - center,
+        dy = y - center;
+      const d = Math.sqrt(dx * dx + dy * dy);
       let a: number;
-      if (d <= radius * 0.5) a = 255; 
-      else if (d >= radius) a = 0; 
-      else a = Math.round(255 * (1 - (d - radius*0.5)/(radius*0.5)));
-      const i = (y*width + x) * channels;
-      buf[i] = buf[i+1] = buf[i+2] = 255; 
-      buf[i+3] = a;
+      if (d <= radius * 0.5) a = 255;
+      else if (d >= radius) a = 0;
+      else a = Math.round(255 * (1 - (d - radius * 0.5) / (radius * 0.5)));
+      const i = (y * width + x) * channels;
+      buf[i] = buf[i + 1] = buf[i + 2] = 255;
+      buf[i + 3] = a;
     }
   }
-  
-  return sharp(buf, { raw: { width, height, channels: channels as 4 } }).png().toBuffer();
+
+  return sharp(buf, { raw: { width, height, channels: channels as 4 } })
+    .png()
+    .toBuffer();
 }

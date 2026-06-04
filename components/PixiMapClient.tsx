@@ -1,15 +1,15 @@
 "use client";
 
+import { ZMAX } from "@/lib/coords";
+import { Draggable, GridRenderer, TileManager } from "@/lib/pixi-engine";
 import { api } from "@/trpc/react";
 import dynamic from "next/dynamic";
 import {
   useRouter,
   useSearchParams as useSearchParamsHook,
 } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import * as PIXI from 'pixi.js';
-import { Draggable, GridRenderer, TileManager } from "@/lib/pixi-engine";
-import { TILE, ZMAX } from "@/lib/coords";
+import * as PIXI from "pixi.js";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const TileControls = dynamic(() => import("./TileControls"), { ssr: false });
 
@@ -19,6 +19,7 @@ type PixiMapClientProps = {
 
 export default function PixiMapClient({ mapId }: PixiMapClientProps) {
   const { data: mapConfig } = api.maps.get.useQuery({ id: mapId });
+  const { data: tiles } = api.tiles.all.useQuery({ mapId });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
@@ -167,7 +168,7 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
 
     const initPixi = async () => {
       try {
-        console.log('Initializing Pixi fixed grid...');
+        console.log("Initializing Pixi fixed grid...");
 
         // Create Pixi application
         const app = new PIXI.Application();
@@ -198,18 +199,42 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
         gridRendererRef.current = gridRenderer;
         tileManagerRef.current = tileManager;
 
-        // Load initial 10x15 grid (centered on world)
-        console.log('Loading initial 10x15 grid...');
-        gridRenderer.loadVisibleTiles();
+        // Load initial grid with tiles data
+        console.log("Loading initial dynamic grid...");
+        gridRenderer.loadVisibleTiles(tiles);
 
-        // Setup simple mouse events for tile interaction
-        app.stage.on('pointermove', (event: PIXI.FederatedPointerEvent) => {
+        // Setup mouse events for tile interaction with drag detection
+        let dragStartPosition = { x: 0, y: 0 };
+        let hasDragged = false;
+
+        app.stage.on("pointerdown", (event: PIXI.FederatedPointerEvent) => {
+          dragStartPosition = { x: event.global.x, y: event.global.y };
+          hasDragged = false;
+        });
+
+        app.stage.on("pointermove", (event: PIXI.FederatedPointerEvent) => {
           if (mouseMoveTimeoutRef.current) {
             clearTimeout(mouseMoveTimeoutRef.current);
           }
 
+          // Check if we've dragged significantly
+          const dragDistance = Math.sqrt(
+            Math.pow(event.global.x - dragStartPosition.x, 2) +
+            Math.pow(event.global.y - dragStartPosition.y, 2)
+          );
+
+          if (dragDistance > 5) { // 5px threshold for drag detection
+            hasDragged = true;
+            // Close any open tile popup when dragging starts
+            setSelectedTile(null);
+          }
+
           mouseMoveTimeoutRef.current = setTimeout(() => {
-            const tileInfo = gridRenderer.getTileAt(event.global.x, event.global.y);
+            const tileInfo = gridRenderer.getTileAt(
+              event.global.x,
+              event.global.y,
+              tiles
+            );
             if (tileInfo) {
               setHoveredTile({
                 ...tileInfo,
@@ -222,21 +247,28 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
           }, 50);
         });
 
-        app.stage.on('pointerdown', (event: PIXI.FederatedPointerEvent) => {
-          const tileInfo = gridRenderer.getTileAt(event.global.x, event.global.y);
-          if (tileInfo) {
-            setSelectedTile({
-              ...tileInfo,
-              screenX: event.global.x,
-              screenY: event.global.y,
-            });
+        app.stage.on("pointerup", (event: PIXI.FederatedPointerEvent) => {
+          // Only open popup if we haven't dragged
+          if (!hasDragged) {
+            const tileInfo = gridRenderer.getTileAt(
+              event.global.x,
+              event.global.y,
+              tiles
+            );
+            if (tileInfo) {
+              setSelectedTile({
+                ...tileInfo,
+                screenX: event.global.x,
+                screenY: event.global.y,
+              });
+            }
           }
         });
 
         setInitialized(true);
-        console.log('Pixi fixed grid initialized successfully');
+        console.log("Pixi fixed grid initialized successfully");
       } catch (error) {
-        console.error('Failed to initialize Pixi map:', error);
+        console.error("Failed to initialize Pixi map:", error);
       }
     };
 
@@ -246,14 +278,14 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
     const handleResize = () => {
       if (appRef.current && gridRendererRef.current) {
         appRef.current.renderer.resize(window.innerWidth, window.innerHeight);
-        gridRendererRef.current.centerGrid();
+        gridRendererRef.current.centerGrid(tiles);
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener("resize", handleResize);
       if (appRef.current) {
         appRef.current.destroy();
         appRef.current = null;
@@ -262,6 +294,15 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
     };
   }, [mapConfig, mapId]);
 
+  // Update tiles when data changes
+  useEffect(() => {
+    if (draggableRef.current && gridRendererRef.current && tiles) {
+      draggableRef.current.setTiles(tiles);
+      // Optionally reload grid to show new tiles immediately
+      gridRendererRef.current.loadVisibleTiles(tiles);
+    }
+  }, [tiles]);
+
   return (
     <div className="w-full h-full relative">
       <div className="p-3 z-10 absolute top-2 left-2 bg-white/90 rounded-xl shadow-lg flex flex-col gap-2">
@@ -269,11 +310,16 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
           Dynamic Grid - Navigate by dragging
         </div>
         <div className="text-xs text-gray-400">
-          Initialized: {initialized ? 'Yes' : 'No'}
+          Initialized: {initialized ? "Yes" : "No"}
         </div>
         {gridRendererRef.current && (
           <div className="text-xs text-gray-400">
             Tiles loaded: {gridRendererRef.current.tilesCount}
+          </div>
+        )}
+        {gridRendererRef.current && (
+          <div className="text-xs text-gray-400">
+            Cell size: {gridRendererRef.current.cellSize}px (scroll to zoom)
           </div>
         )}
         {hoveredTile && (
@@ -283,21 +329,6 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
         )}
       </div>
 
-      {/* Hover highlight */}
-      {hoveredTile && !selectedTile && (
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            left: hoveredTile.screenX - 32,
-            top: hoveredTile.screenY - 32,
-            width: 64,
-            height: 64,
-            background: "rgba(255,255,255,0.3)",
-            border: "2px solid rgba(255,255,255,0.8)",
-            zIndex: 1000,
-          }}
-        />
-      )}
 
       {/* Tile menu */}
       {selectedTile && (
@@ -322,14 +353,28 @@ export default function PixiMapClient({ mapId }: PixiMapClientProps) {
               x={selectedTile.worldX}
               y={selectedTile.worldY}
               z={mapConfig?.depth}
-              exists={false} // Simplified for now
+              exists={
+                tiles?.some(
+                  (t) =>
+                    t.x === selectedTile.worldX &&
+                    t.y === selectedTile.worldY &&
+                    t.urls &&
+                    t.urls.length > 0
+                ) || false
+              }
               onGenerate={(prompt) =>
                 handleGenerate(selectedTile.worldX, selectedTile.worldY, prompt)
               }
               onRegenerate={(prompt) =>
-                handleRegenerate(selectedTile.worldX, selectedTile.worldY, prompt)
+                handleRegenerate(
+                  selectedTile.worldX,
+                  selectedTile.worldY,
+                  prompt
+                )
               }
-              onDelete={() => handleDelete(selectedTile.worldX, selectedTile.worldY)}
+              onDelete={() =>
+                handleDelete(selectedTile.worldX, selectedTile.worldY)
+              }
             />
           </div>
         </div>
